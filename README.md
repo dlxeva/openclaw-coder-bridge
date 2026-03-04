@@ -35,8 +35,8 @@ OpenClaw Agent reads result
   - [Claude Code](https://github.com/anthropics/claude-code): `npm install -g @anthropic-ai/claude-code`
   - Or Codex, OpenCode, etc.
 - Python 3.8+
-- Windows (Linux/Mac support planned)
-- [Git for Windows](https://git-scm.com/download/win) — required if using Claude Code (its wrapper script needs bash)
+- Windows, macOS, or Linux
+- **Windows only:** [Git for Windows](https://git-scm.com/download/win) — Claude Code's npm wrapper is a bash script that requires Git Bash on Windows. Not needed on Mac/Linux.
 
 ## Installation
 
@@ -50,7 +50,9 @@ Copy `coder-bridge.py` to your preferred location. Recommended:
 
 `inbox/`, `outbox/`, and `archive/` subdirectories are created automatically on first run.
 
-### 2. Configure autostart (Windows)
+### 2. Configure autostart
+
+#### Windows
 
 Edit `setup/start-bridge.vbs` with your credentials:
 
@@ -70,6 +72,44 @@ Create a shortcut in your Windows Startup folder:
 > **Why target `wscript.exe` instead of the `.vbs` directly?**
 > Windows shortcuts corrupt non-ASCII characters (e.g. usernames with CJK characters) in hardcoded paths.
 > Pointing to `wscript.exe` and using `%USERPROFILE%` in Arguments lets Windows expand at runtime, bypassing the bug.
+
+#### macOS / Linux
+
+> **Note:** macOS and Linux support is included in the code but has not been tested by the author. If you try it, please [open an issue](https://github.com/dlxeva/openclaw-coder-bridge/issues) to share your results.
+
+Create a launchd plist at `~/Library/LaunchAgents/com.openclaw.coder-bridge.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.openclaw.coder-bridge</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/path/to/coder-bridge.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TELEGRAM_BOT_TOKEN</key><string>YOUR_BOT_TOKEN</string>
+    <key>TELEGRAM_CHAT_ID</key><string>YOUR_CHAT_ID</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+</dict>
+</plist>
+```
+
+Then run: `launchctl load ~/Library/LaunchAgents/com.openclaw.coder-bridge.plist`
+
+#### Linux (also untested)
+
+Add to your `~/.bashrc` or create a systemd user service. Simplest one-liner for testing:
+
+```bash
+TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=yyy python3 /path/to/coder-bridge.py &
+```
 
 ### 3. Add the OpenClaw Skill
 

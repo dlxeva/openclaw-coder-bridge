@@ -18,12 +18,13 @@ import locale
 from datetime import datetime
 from pathlib import Path
 
-# Warn early if system encoding is not UTF-8 (affects subprocess on Windows)
-_enc = locale.getpreferredencoding(False)
-if _enc.upper().replace("-", "") not in ("UTF8", "UTF-8"):
-    print(f"[WARNING] System encoding is {_enc}, not UTF-8. "
-          "If you see path or decode errors, enable 'Beta: Use Unicode UTF-8' "
-          "in Windows Region → Administrative → Change system locale, then reboot.")
+# Windows only: warn if system encoding is not UTF-8
+if sys.platform == "win32":
+    _enc = locale.getpreferredencoding(False)
+    if _enc.upper().replace("-", "") not in ("UTF8", "UTF-8"):
+        print(f"[WARNING] System encoding is {_enc}, not UTF-8. "
+              "If you see path or decode errors, enable 'Beta: Use Unicode UTF-8' "
+              "in Windows Region → Administrative → Change system locale, then reboot.")
 
 # 路径配置
 BASE_DIR = Path(__file__).parent
@@ -61,7 +62,7 @@ CODER_TIMEOUT = int(os.environ.get("CODER_TIMEOUT", "600"))
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Git Bash 路径 —— 优先用环境变量，否则自动检测常见安装位置
+# Windows only: locate Git Bash (claude is a bash script on Windows)
 def _find_bash():
     if env := os.environ.get("BASH_EXE"):
         return env
@@ -73,11 +74,11 @@ def _find_bash():
         if Path(p).exists():
             return p
     raise RuntimeError(
-        "找不到 Git Bash。请安装 Git for Windows，"
-        "或设置环境变量 BASH_EXE 指向 bash.exe 路径。"
+        "Git Bash not found. Install Git for Windows, "
+        "or set the BASH_EXE environment variable to your bash.exe path."
     )
 
-BASH_EXE = _find_bash()
+BASH_EXE = _find_bash() if sys.platform == "win32" else None
 
 
 def log(msg):
@@ -201,40 +202,47 @@ status: ok|error
 
 
 def run_claude(prompt):
-    """调用 Claude Code - 使用 Git Bash 避免中文路径编码问题"""
-    # 清理嵌套 session 标记（保留 ANTHROPIC_API_KEY）
+    """Invoke the coding AI. Routes through Git Bash on Windows; calls directly on Mac/Linux."""
+    # Strip nested-session markers (keep ANTHROPIC_API_KEY)
     env = os.environ.copy()
     for k in list(env.keys()):
         if "CLAUDE" in k.upper():
             del env[k]
 
-    # 补全 PATH：确保 Git Bash Unix 工具可用（claude wrapper 需要 sed/dirname/uname）
-    bash_dir = str(Path(BASH_EXE).parent)          # .../Git/usr/bin
-    git_bin  = str(Path(BASH_EXE).parent.parent.parent / "bin")  # .../Git/bin
-    current_path = env.get("PATH", "")
-    if bash_dir not in current_path:
-        env["PATH"] = bash_dir + ";" + git_bin + ";" + current_path
+    if sys.platform == "win32":
+        # Windows: claude is a bash script — must run via Git Bash.
+        # Also patch PATH so the wrapper can find sed/dirname/uname.
+        bash_dir = str(Path(BASH_EXE).parent)           # .../Git/usr/bin
+        git_bin  = str(Path(BASH_EXE).parent.parent.parent / "bin")  # .../Git/bin
+        current_path = env.get("PATH", "")
+        if bash_dir not in current_path:
+            env["PATH"] = bash_dir + ";" + git_bin + ";" + current_path
 
-    # claude bash wrapper 用 dirname "$0" 定位 node_modules，
-    # 但 $0 为命令名"claude"时 dirname 返回 "."（当前目录）。
-    # 将 cwd 设为 npm bin 目录，确保 "." 正确指向含 node_modules 的位置。
-    # 优先用 shutil.which 自动定位（兼容 nvm/pnpm/自定义 prefix），找不到再 fallback。
-    _claude_which = shutil.which("claude")
-    npm_bin = (
-        Path(_claude_which).parent
-        if _claude_which
-        else Path.home() / "AppData" / "Roaming" / "npm"
-    )
+        # The bash wrapper uses `dirname "$0"` to locate node_modules.
+        # When called as just "claude", dirname returns ".".
+        # Set cwd to the npm bin dir so "." resolves correctly.
+        _claude_which = shutil.which("claude")
+        npm_bin = (
+            Path(_claude_which).parent
+            if _claude_which
+            else Path.home() / "AppData" / "Roaming" / "npm"
+        )
+        cmd = [BASH_EXE, "-c", "claude -p --dangerously-skip-permissions"]
+        cwd = str(npm_bin)
+    else:
+        # Mac / Linux: claude is a native binary, call it directly.
+        claude_exe = shutil.which("claude") or "claude"
+        cmd = [claude_exe, "-p", "--dangerously-skip-permissions"]
+        cwd = None
 
-    # 通过 Git Bash 调用 claude -p，prompt 经由 stdin 传入
     result = subprocess.run(
-        [BASH_EXE, "-c", "claude -p --dangerously-skip-permissions"],
+        cmd,
         input=prompt,
         capture_output=True,
         text=True,
         encoding="utf-8",
         env=env,
-        cwd=str(npm_bin),
+        cwd=cwd,
         timeout=CODER_TIMEOUT,
     )
 
